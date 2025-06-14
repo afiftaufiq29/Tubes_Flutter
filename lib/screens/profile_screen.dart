@@ -620,6 +620,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                                 'Lihat Riwayat Pesanan',
                                 Icons.arrow_forward_ios,
                                 action: () {
+                                  // Arahkan ke Halaman Riwayat yang baru
                                   Navigator.pushNamed(context, '/history');
                                 },
                               ),

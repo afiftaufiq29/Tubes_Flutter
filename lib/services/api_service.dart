@@ -1,27 +1,61 @@
+/*
+================================================================================
+| File: lib/services/api_service.dart (UPDATED)                                |
+|------------------------------------------------------------------------------|
+| Perubahan:                                                                   |
+| 1. Diubah menjadi Singleton untuk memastikan hanya ada satu instance.        |
+| 2. Token otentikasi sekarang akan konsisten di seluruh aplikasi.             |
+================================================================================
+*/
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart'; // For kDebugMode
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart'; // Import SharedPreferences
 
 import '../models/food_model.dart';
 import '../models/reservation_model.dart';
 import '../models/user_model.dart';
+import '../models/order_model.dart';
 
 class ApiService {
-  // Pastikan ini adalah IP yang BENAR untuk lingkungan Anda
-  // Untuk Android Emulator: 'http://10.0.2.2:8000/api'
-  // Untuk iOS Simulator/Localhost: 'http://localhost:8000/api'
-  // Untuk Physical Device (replace with your local IP): 'http://<your_local_ip>:8000/api'
-  static const String _baseUrl =
-      'http://192.168.1.4:8000/api'; // Sesuaikan ini!
+  // Langkah 1: Buat constructor private.
+  ApiService._internal();
 
+  // Langkah 2: Buat satu instance statis & final.
+  static final ApiService _instance = ApiService._internal();
+
+  // Langkah 3: Buat factory constructor yang selalu mengembalikan instance yang sama.
+  factory ApiService() {
+    return _instance;
+  }
+
+  static const String _baseUrl =
+      'http://192.168.1.18:8000/api'; // Sesuaikan IP Anda
   String? _authToken;
+  static const String _tokenKey = 'auth_token'; // Kunci untuk SharedPreferences
+
+  // --- Initialization ---
+  /// Panggil ini saat aplikasi dimulai untuk memuat token dari penyimpanan.
+  Future<void> initAuth() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(_tokenKey);
+    if (token != null) {
+      _authToken = token;
+      if (kDebugMode) {
+        print('Auth token loaded from storage into singleton instance.');
+      }
+    }
+  }
 
   // --- Authentication Token Management ---
-  void setAuthToken(String token) {
+  Future<void> _setAuthToken(String token) async {
     _authToken = token;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        _tokenKey, token); // Simpan token ke SharedPreferences
     if (kDebugMode) {
-      print('Auth token set: $_authToken');
+      print('Auth token set and saved: $_authToken');
     }
   }
 
@@ -29,14 +63,15 @@ class ApiService {
     return _authToken;
   }
 
-  void clearAuthToken() {
+  Future<void> _clearAuthToken() async {
     _authToken = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey); // Hapus token dari SharedPreferences
     if (kDebugMode) {
       print('Auth token cleared.');
     }
   }
 
-  // Helper to get headers with optional authentication
   Map<String, String> _getHeaders({bool requireAuth = false}) {
     final Map<String, String> headers = {
       'Content-Type': 'application/json',
@@ -49,8 +84,6 @@ class ApiService {
   }
 
   // --- Authentication Endpoints ---
-
-  /// Registers a new user and sets the authentication token upon success.
   Future<UserModel> registerUser(String name, String email, String phone,
       String password, String passwordConfirmation) async {
     final response = await http.post(
@@ -67,18 +100,16 @@ class ApiService {
 
     if (response.statusCode == 201) {
       final Map<String, dynamic> responseData = jsonDecode(response.body);
-      // Asumsi Laravel mengembalikan 'user' dan 'token' langsung di root
-      // Sesuaikan jika struktur response berbeda (misal, 'data' => {'user': ..., 'token': ...})
-      setAuthToken(responseData['token']);
+      await _setAuthToken(
+          responseData['token']); // Gunakan metode baru untuk menyimpan token
       return UserModel.fromJson(responseData['user']);
     } else {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
-          'Failed to register: ${errorData['message'] ?? errorData['errors'] ?? 'Unknown error, Status Code: ${response.statusCode}'}');
+          'Failed to register: ${errorData['message'] ?? errorData['errors'] ?? 'Unknown error'}');
     }
   }
 
-  /// Logs in a user and sets the authentication token upon success.
   Future<UserModel> loginUser(String email, String password) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/login'),
@@ -88,32 +119,28 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final Map<String, dynamic> responseData = jsonDecode(response.body);
-      // Asumsi Laravel mengembalikan 'user' dan 'token' langsung di root
-      setAuthToken(responseData['token']);
+      await _setAuthToken(
+          responseData['token']); // Gunakan metode baru untuk menyimpan token
       return UserModel.fromJson(responseData['user']);
     } else {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
-          'Failed to login: ${errorData['message'] ?? errorData['errors'] ?? 'Unknown error, Status Code: ${response.statusCode}'}');
+          'Failed to login: ${errorData['message'] ?? errorData['errors'] ?? 'Unknown error'}');
     }
   }
 
-  /// Logs out the current user and clears the authentication token.
   Future<void> logoutUser() async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/logout'),
-      headers: _getHeaders(requireAuth: true),
-    );
-
-    if (response.statusCode == 200) {
-      clearAuthToken();
+    try {
+      await http.post(
+        Uri.parse('$_baseUrl/logout'),
+        headers: _getHeaders(requireAuth: true),
+      );
+    } catch (e) {
       if (kDebugMode) {
-        print('Logged out successfully');
+        print("Failed to notify server of logout, but proceeding: $e");
       }
-    } else {
-      final Map<String, dynamic> errorData = jsonDecode(response.body);
-      throw Exception(
-          'Failed to logout: ${errorData['message'] ?? errorData['errors'] ?? 'Unknown error, Status Code: ${response.statusCode}'}');
+    } finally {
+      await _clearAuthToken(); // Hapus token dari lokal
     }
   }
 
@@ -125,8 +152,7 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      return UserModel.fromJson(jsonDecode(response
-          .body)); // Laravel Passport/Sanctum user endpoint returns User model directly
+      return UserModel.fromJson(jsonDecode(response.body));
     } else {
       throw Exception(
           'Failed to load user: Status Code: ${response.statusCode}');
@@ -134,14 +160,12 @@ class ApiService {
   }
 
   // --- Food Endpoints (Menus) ---
-
-  /// Fetches a list of all food items (menus).
   Future<List<FoodModel>> fetchFoods() async {
     final url = Uri.parse('$_baseUrl/foods');
     try {
       final response = await http.get(
         url,
-        headers: _getHeaders(), // No auth needed for public food listings
+        headers: _getHeaders(),
       );
 
       if (response.statusCode == 200) {
@@ -157,9 +181,6 @@ class ApiService {
     }
   }
 
-  // Based on your original code, 'fetchDrinks' also returns FoodModel.
-  // If 'drinks' are a separate category, you might want a distinct model or endpoint.
-  /// Fetches a list of drink items. Assumes drinks are also represented by `FoodModel`.
   Future<List<FoodModel>> fetchDrinks() async {
     final url = Uri.parse('$_baseUrl/drinks-admin');
     try {
@@ -181,9 +202,7 @@ class ApiService {
     }
   }
 
-  /// Fetches a single food item by its ID.
   Future<FoodModel> fetchFoodById(int id) async {
-    // Changed id type to int
     final response = await http.get(
       Uri.parse('$_baseUrl/foods/$id'),
       headers: _getHeaders(),
@@ -197,35 +216,15 @@ class ApiService {
     }
   }
 
-  // Note: These CRUD methods for food/drink below (addFood, updateFood, deleteFood)
-  // are likely meant for an ADMIN PANEL API.
-  // Your current Laravel backend uses `admin/menu_items` for web UI,
-  // and `foods`/`drinks` API endpoints are for listing.
-  // If you also want to manage CRUD for menu items via API (e.g., from a separate admin app),
-  // you'd need dedicated API routes for `menu_items` resource in Laravel.
-  // For now, these methods *might* not match your Laravel routes perfectly.
-  // Assumes `foods` endpoint in Laravel can handle full CRUD.
-
-  /// Adds a new food item. Requires authentication.
   Future<FoodModel> addFood(FoodModel food) async {
-    // Note: Laravel's MenuItemController store method expects 'image' as file, not 'image_url' in JSON.
-    // This method needs to be modified if you intend to upload image file directly from Flutter.
-    // For now, it assumes imageUrl is sent as a string and backend handles it.
-    // If you plan to send files from Flutter, use `http.MultipartRequest`.
     final response = await http.post(
-      Uri.parse(
-          '$_baseUrl/foods'), // Assuming this is an API endpoint for creating a new food item
-      headers: _getHeaders(
-          requireAuth:
-              true), // Laravel needs a specific API endpoint for CRUD with auth
-      body: jsonEncode(
-          food.toJson()), // food.toJson() sends image_url, not an actual file
+      Uri.parse('$_baseUrl/foods'),
+      headers: _getHeaders(requireAuth: true),
+      body: jsonEncode(food.toJson()),
     );
 
     if (response.statusCode == 201) {
-      // Assuming Laravel returns the created food item directly or inside 'food' key
-      return FoodModel.fromJson(jsonDecode(
-          response.body)); // Adjusted based on common Laravel API responses
+      return FoodModel.fromJson(jsonDecode(response.body));
     } else {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
@@ -233,20 +232,15 @@ class ApiService {
     }
   }
 
-  /// Updates an existing food item by its ID. Requires authentication.
   Future<FoodModel> updateFood(int id, FoodModel food) async {
-    // Changed id type to int
-    // Similar note as addFood regarding image upload
     final response = await http.put(
-      Uri.parse(
-          '$_baseUrl/foods/$id'), // Assuming this is an API endpoint for updating a food item
+      Uri.parse('$_baseUrl/foods/$id'),
       headers: _getHeaders(requireAuth: true),
       body: jsonEncode(food.toJson()),
     );
 
     if (response.statusCode == 200) {
-      return FoodModel.fromJson(jsonDecode(
-          response.body)); // Adjusted based on common Laravel API responses
+      return FoodModel.fromJson(jsonDecode(response.body));
     } else {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
@@ -254,43 +248,33 @@ class ApiService {
     }
   }
 
-  /// Deletes a food item by its ID. Requires authentication.
   Future<void> deleteFood(int id) async {
-    // Changed id type to int
     final response = await http.delete(
-      Uri.parse(
-          '$_baseUrl/foods/$id'), // Assuming this is an API endpoint for deleting a food item
+      Uri.parse('$_baseUrl/foods/$id'),
       headers: _getHeaders(requireAuth: true),
     );
 
-    if (response.statusCode == 200) {
-      if (kDebugMode) {
-        print('Food deleted successfully');
-      }
-    } else {
+    if (response.statusCode != 200) {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
           'Failed to delete food: ${errorData['message'] ?? errorData['errors'] ?? 'Unknown error, Status Code: ${response.statusCode}'}');
     }
   }
 
-  /// Adds a review to a specific food item. Requires authentication.
+  // --- Review and Order Endpoints ---
   Future<Review> addReviewToFood(int foodId, Review review) async {
-    // Changed foodId type to int
     final response = await http.post(
-      Uri.parse(
-          '$_baseUrl/menu_items/$foodId/reviews'), // Corrected path to match Laravel's route
+      Uri.parse('$_baseUrl/foods/$foodId/reviews'),
       headers: _getHeaders(requireAuth: true),
       body: jsonEncode(review.toJson()),
     );
 
     if (response.statusCode == 201) {
-      // Laravel's addReview currently returns { message: 'Review added successfully!', menu_item: ... }
-      // So, we might not get a 'review' key directly. Let's return the passed review for simplicity
-      // or parse the 'menu_item' if you want the updated item.
-      // For now, assuming Laravel confirms the review was added, we return the review object itself.
-      // If Laravel returns the new Review object, parse it like: Review.fromJson(jsonDecode(response.body)['review'])
-      return review; // Return the original review object if Laravel doesn't send the full new Review back
+      final responseData = jsonDecode(response.body);
+      if (responseData['review'] != null) {
+        return Review.fromJson(responseData['review']);
+      }
+      return review;
     } else {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
@@ -298,10 +282,22 @@ class ApiService {
     }
   }
 
-  // --- Reservation Endpoints ---
-  // Assuming these models and endpoints are already configured correctly in Laravel
+  Future<List<OrderModel>> fetchOrderHistory() async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/orders/history'),
+      headers: _getHeaders(requireAuth: true),
+    );
 
-  /// Fetches a list of all reservations. Requires authentication.
+    if (response.statusCode == 200) {
+      final List<dynamic> historyJson = jsonDecode(response.body);
+      return historyJson.map((json) => OrderModel.fromJson(json)).toList();
+    } else {
+      throw Exception(
+          'Failed to load order history: Status Code: ${response.statusCode}');
+    }
+  }
+
+  // --- Reservation Endpoints ---
   Future<List<ReservationModel>> fetchReservations() async {
     final response = await http.get(
       Uri.parse('$_baseUrl/reservations'),
@@ -320,7 +316,6 @@ class ApiService {
     }
   }
 
-  /// Adds a new reservation. Requires authentication.
   Future<ReservationModel> addReservation(ReservationModel reservation) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/reservations'),
@@ -329,9 +324,8 @@ class ApiService {
     );
 
     if (response.statusCode == 201) {
-      // Assuming Laravel returns the created reservation directly or inside 'reservation' key
-      return ReservationModel.fromJson(jsonDecode(
-          response.body)); // Adjusted based on common Laravel API responses
+      final responseData = jsonDecode(response.body);
+      return ReservationModel.fromJson(responseData['reservation']);
     } else {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
@@ -339,10 +333,8 @@ class ApiService {
     }
   }
 
-  /// Updates an existing reservation by its ID. Requires authentication.
   Future<ReservationModel> updateReservation(
       int id, ReservationModel reservation) async {
-    // Changed id type to int
     final response = await http.put(
       Uri.parse('$_baseUrl/reservations/$id'),
       headers: _getHeaders(requireAuth: true),
@@ -350,8 +342,8 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      return ReservationModel.fromJson(jsonDecode(
-          response.body)); // Adjusted based on common Laravel API responses
+      final responseData = jsonDecode(response.body);
+      return ReservationModel.fromJson(responseData['reservation']);
     } else {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
@@ -359,19 +351,13 @@ class ApiService {
     }
   }
 
-  /// Deletes a reservation by its ID. Requires authentication.
   Future<void> deleteReservation(int id) async {
-    // Changed id type to int
     final response = await http.delete(
       Uri.parse('$_baseUrl/reservations/$id'),
       headers: _getHeaders(requireAuth: true),
     );
 
-    if (response.statusCode == 200) {
-      if (kDebugMode) {
-        print('Reservation deleted successfully');
-      }
-    } else {
+    if (response.statusCode != 200) {
       final Map<String, dynamic> errorData = jsonDecode(response.body);
       throw Exception(
           'Failed to delete reservation: ${errorData['message'] ?? errorData['errors'] ?? 'Unknown error, Status Code: ${response.statusCode}'}');

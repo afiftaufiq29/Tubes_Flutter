@@ -8,15 +8,19 @@ import 'package:tubes_flutter/screens/menu_screen.dart';
 import 'package:tubes_flutter/screens/reservation_screen.dart';
 import 'package:tubes_flutter/screens/profile_screen.dart';
 import 'package:tubes_flutter/screens/payment_screen.dart';
-import 'package:tubes_flutter/screens/menu_screen_reservation.dart'
-    as menu_resv;
 import 'package:tubes_flutter/models/food_model.dart';
 import 'package:tubes_flutter/widgets/food_card.dart';
 import 'package:tubes_flutter/constants/app_colors.dart';
 import 'package:tubes_flutter/constants/app_styles.dart';
+import 'package:tubes_flutter/services/api_service.dart'; // Import ApiService
 
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+Future<void> main() async {
+  // Ubah menjadi async
+  WidgetsFlutterBinding.ensureInitialized(); // Wajib ada untuk async main
+
+  // Inisialisasi ApiService dan muat token dari penyimpanan
+  await ApiService().initAuth();
+
   runApp(const MyApp());
 }
 
@@ -75,7 +79,6 @@ class MyApp extends StatelessWidget {
       '/menu': (context) => const MenuScreen(),
       '/reservation': (context) => const ReservationScreen(),
       '/profile': (context) => const ProfileScreen(),
-      // '/menu-reservation': (context) => const menu_resv.MenuScreenReservation(),
       '/history': (context) => const HistoryScreen(),
       '/payment': (context) {
         final args =

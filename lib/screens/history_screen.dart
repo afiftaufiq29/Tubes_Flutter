@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
-import '../models/food_model.dart'; // Assuming FoodModel and Review are still relevant for your models
+import 'package:intl/intl.dart';
+import '../services/api_service.dart'; // Ganti dari SharedPreferences ke ApiService
+import '../models/order_model.dart'; // Gunakan model data dari API
+import '../models/food_model.dart'; // Impor ini untuk mengakses model 'Review'
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -11,35 +12,23 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  List<OrderHistory> orderHistory = [];
+  final ApiService _apiService = ApiService();
+  late Future<List<OrderModel>> _historyFuture;
 
   @override
   void initState() {
     super.initState();
-    _loadOrderHistory();
+    // Memuat data dari API, bukan SharedPreferences
+    _loadOrderHistoryFromApi();
   }
 
-  Future<void> _loadOrderHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final orderHistoryData = prefs.getStringList('order_history') ?? [];
-
+  void _loadOrderHistoryFromApi() {
     setState(() {
-      orderHistory = orderHistoryData
-          .map((e) => OrderHistory.fromJson(json.decode(e)))
-          .toList();
+      // NOTE: The error "The method 'fetchOrderHistory' isn't defined"
+      // means you need to add this method to your ApiService class.
+      _historyFuture = _apiService.fetchOrderHistory();
     });
   }
-
-  Future<void> _saveOrderHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final List<String> orderHistoryList =
-        orderHistory.map((order) => json.encode(order.toJson())).toList();
-    await prefs.setStringList('order_history', orderHistoryList);
-  }
-
-  // The _saveFoodReview function is removed as it relied on MockData.
-  // If you need to save reviews to actual food/drink items, you'll need
-  // to implement a new data storage mechanism for your FoodModel and Review models.
 
   @override
   Widget build(BuildContext context) {
@@ -60,22 +49,45 @@ class _HistoryScreenState extends State<HistoryScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: orderHistory.isEmpty
-          ? const Center(
+      // Gunakan FutureBuilder untuk menangani state dari API call
+      body: FutureBuilder<List<OrderModel>>(
+        future: _historyFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'Gagal memuat riwayat. Pastikan metode `fetchOrderHistory` ada di ApiService Anda dan backend berjalan.\n\nError: ${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return const Center(
               child: Text('Belum ada riwayat pesanan'),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: orderHistory.length,
-              itemBuilder: (context, index) {
-                final order = orderHistory[index];
-                return _buildOrderCard(order);
-              },
-            ),
+            );
+          }
+
+          final orders = snapshot.data!;
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: orders.length,
+            itemBuilder: (context, index) {
+              final order = orders[index];
+              return _buildOrderCard(order);
+            },
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildOrderCard(OrderHistory order) {
+  Widget _buildOrderCard(OrderModel order) {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       elevation: 2,
@@ -92,14 +104,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  order.date,
+                  // Format tanggal dari API
+                  DateFormat('dd MMMM yyyy, HH:mm').format(order.orderDate),
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: Colors.grey[700],
                   ),
                 ),
                 Text(
-                  'ID: ${order.id}',
+                  'ID: #${order.id}',
                   style: TextStyle(
                     color: Colors.grey[500],
                     fontSize: 12,
@@ -108,17 +121,107 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            ...order.items.map((item) => _buildMenuItemCard(item)).toList(),
+            // Loop melalui item di dalam order
+            ...order.items.map((item) {
+              // Kirim callback untuk me-refresh halaman setelah review berhasil
+              return _MenuItemReviewCard(
+                orderItem: item,
+                onReviewSubmitted: _loadOrderHistoryFromApi,
+              );
+            }).toList(),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildMenuItemCard(OrderItem item) {
-    TextEditingController reviewController = TextEditingController(
-      text: item.review ?? '',
+// Pisahkan card item menjadi StatefulWidget sendiri untuk mengelola state rating & review
+class _MenuItemReviewCard extends StatefulWidget {
+  final OrderItemModel orderItem;
+  final VoidCallback onReviewSubmitted;
+
+  const _MenuItemReviewCard({
+    required this.orderItem,
+    required this.onReviewSubmitted,
+  });
+
+  @override
+  State<_MenuItemReviewCard> createState() => __MenuItemReviewCardState();
+}
+
+class __MenuItemReviewCardState extends State<_MenuItemReviewCard> {
+  final ApiService _apiService = ApiService();
+  final TextEditingController _reviewController = TextEditingController();
+  int? _currentRating;
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _reviewController.dispose();
+    super.dispose();
+  }
+
+  // FIXED: This function now creates a `Review` object to match the expected
+  // argument type in your `ApiService.addReviewToFood` method.
+  Future<void> _submitReview() async {
+    if (_currentRating == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Harap berikan rating bintang terlebih dahulu.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    // Buat objek Review. Ini mengasumsikan model Review Anda memiliki
+    // constructor `rating`, `comment`, dan `date`.
+    final review = Review(
+      rating: _currentRating!,
+      comment: _reviewController.text,
+      date: DateFormat('yyyy-MM-dd')
+          .format(DateTime.now()), // Kirim tanggal saat ini
     );
+
+    try {
+      // Panggil API dengan argumen yang benar: int dan Review.
+      // Ini akan memperbaiki error 'argument_type_not_assignable' dan 'extra_positional_arguments'.
+      // Pastikan method `addReviewToFood` di ApiService Anda menerima (int foodId, Review review).
+      await _apiService.addReviewToFood(
+        widget.orderItem.menuItem.id, // ID dari menu item
+        review,
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ulasan Anda telah berhasil dikirim!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      // Panggil callback untuk me-refresh data di halaman utama
+      widget.onReviewSubmitted();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal mengirim ulasan: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Cek apakah item ini sudah pernah diberi ulasan dari data API
+    // (Asumsi: Jika ada review, backend akan mengisinya di data `menuItem`)
+    final bool hasExistingReview = widget.orderItem.menuItem.reviews.isNotEmpty;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -135,11 +238,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  item.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
+                Expanded(
+                  child: Text(
+                    widget.orderItem.menuItem
+                        .name, // Ambil nama dari nested menuItem
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
                   ),
                 ),
                 Container(
@@ -150,7 +256,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    '${item.quantity}x',
+                    '${widget.orderItem.quantity}x',
                     style: TextStyle(
                       color: Colors.orange[700],
                       fontWeight: FontWeight.bold,
@@ -160,7 +266,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            if (item.rating == null || item.review == null) ...[
+            // Tampilkan form review hanya jika belum ada review
+            if (!hasExistingReview) ...[
               const Text(
                 'Berikan Rating:',
                 style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
@@ -169,21 +276,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(5, (starIndex) {
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        item.rating = starIndex + 1;
-                      });
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      child: Icon(
-                        starIndex < (item.rating ?? 0)
-                            ? Icons.star_rounded
-                            : Icons.star_border_rounded,
-                        color: Colors.orange,
-                        size: 36,
-                      ),
+                  return IconButton(
+                    onPressed: () =>
+                        setState(() => _currentRating = starIndex + 1),
+                    icon: Icon(
+                      starIndex < (_currentRating ?? 0)
+                          ? Icons.star_rounded
+                          : Icons.star_border_rounded,
+                      color: Colors.orange,
+                      size: 36,
                     ),
                   );
                 }),
@@ -201,11 +302,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   border: Border.all(color: Colors.grey[300]!),
                 ),
                 child: TextField(
-                  controller: reviewController,
+                  controller: _reviewController,
                   maxLines: 5,
                   minLines: 3,
                   decoration: const InputDecoration(
-                    hintText: 'Tulis ulasan Anda...',
+                    hintText: 'Tulis ulasan Anda (opsional)...',
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.all(16),
                   ),
@@ -215,36 +316,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () async {
-                    if (item.rating == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Harap berikan rating terlebih dahulu'),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
-                      return;
-                    }
-
-                    setState(() {
-                      item.review = reviewController.text;
-                    });
-
-                    await _saveOrderHistory();
-                    // Removed _saveFoodReview(item) call as the function is removed.
-
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Ulasan Anda telah disimpan!'),
-                        backgroundColor: Colors.green,
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.send, size: 20),
-                  label: const Text(
-                    'Kirim Ulasan',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                  onPressed: _isLoading ? null : _submitReview,
+                  icon: _isLoading
+                      ? Container(
+                          width: 20,
+                          height: 20,
+                          padding: const EdgeInsets.all(2.0),
+                          child: const CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 3,
+                          ),
+                        )
+                      : const Icon(Icons.send, size: 20),
+                  label: Text(
+                    _isLoading ? 'Mengirim...' : 'Kirim Ulasan',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orange,
@@ -259,36 +345,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ),
               ),
             ] else ...[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (int i = 0; i < (item.rating ?? 0); i++)
-                    const Icon(Icons.star_rounded,
-                        color: Colors.orange, size: 28),
-                  for (int i = (item.rating ?? 0); i < 5; i++)
-                    const Icon(Icons.star_border_rounded,
-                        color: Colors.grey, size: 28),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Ulasan Anda:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  item.review!,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[700],
-                    height: 1.4,
-                  ),
+              // Tampilkan pesan bahwa ulasan sudah diberikan
+              Center(
+                child: Column(
+                  children: [
+                    const Icon(Icons.check_circle,
+                        color: Colors.green, size: 30),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Anda sudah memberikan ulasan untuk item ini.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -296,67 +365,5 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
       ),
     );
-  }
-}
-
-class OrderHistory {
-  final String id;
-  final String date;
-  final List<OrderItem> items;
-
-  OrderHistory({
-    required this.id,
-    required this.date,
-    required this.items,
-  });
-
-  factory OrderHistory.fromJson(Map<String, dynamic> json) {
-    return OrderHistory(
-      id: json['id'],
-      date: json['date'],
-      items: (json['items'] as List)
-          .map((item) => OrderItem.fromJson(item))
-          .toList(),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'date': date,
-      'items': items.map((item) => item.toJson()).toList(),
-    };
-  }
-}
-
-class OrderItem {
-  final String name;
-  final int quantity;
-  int? rating;
-  String? review;
-
-  OrderItem({
-    required this.name,
-    required this.quantity,
-    this.rating,
-    this.review,
-  });
-
-  factory OrderItem.fromJson(Map<String, dynamic> json) {
-    return OrderItem(
-      name: json['name'],
-      quantity: json['quantity'],
-      rating: json['rating'],
-      review: json['review'],
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'name': name,
-      'quantity': quantity,
-      'rating': rating,
-      'review': review,
-    };
   }
 }
