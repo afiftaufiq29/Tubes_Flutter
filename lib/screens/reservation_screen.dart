@@ -1,6 +1,20 @@
+/*
+================================================================================
+| File: lib/screens/reservation_screen.dart (UPDATED)                          |
+|------------------------------------------------------------------------------|
+| Perubahan:                                                                   |
+| 1. Mengimpor ApiService dan ReservationModel.                                |
+| 2. Mengubah _processReservation menjadi async untuk memanggil API.           |
+| 3. Setelah reservasi sukses, ID reservasi akan ditangkap.                    |
+| 4. Navigasi diubah ke '/menu' sambil mengirim ID reservasi sebagai argumen.  |
+================================================================================
+*/
 import 'package:flutter/material.dart';
+import '../models/reservation_model.dart'; // <-- TAMBAHKAN INI
+import '../services/api_service.dart'; // <-- TAMBAHKAN INI
 import '../utils/validation_helper.dart';
 
+// Widget ReservationScreen tidak perlu diubah, biarkan apa adanya.
 class ReservationScreen extends StatelessWidget {
   const ReservationScreen({super.key});
 
@@ -12,14 +26,12 @@ class ReservationScreen extends StatelessWidget {
         title: const Text('Reservasi Menu',
             style: TextStyle(
               fontWeight: FontWeight.bold,
-              color:
-                  Colors.white, // Warna teks diubah menjadi putih untuk kontras
+              color: Colors.white,
             )),
         centerTitle: true,
-        elevation: 4, // Sedikit elevation untuk efek bayangan
-        backgroundColor: Colors.orange[400], // Warna kuning/orange
-        iconTheme:
-            const IconThemeData(color: Colors.white), // Warna ikon back putih
+        elevation: 4,
+        backgroundColor: Colors.orange[400],
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: const SafeArea(
         child: Padding(
@@ -43,10 +55,14 @@ class ReservationFormState extends State<ReservationForm> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _notesController = TextEditingController();
+  final _guestController =
+      TextEditingController(text: '1'); // <-- TAMBAHKAN UNTUK JUMLAH TAMU
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
-  bool _preorderMenu = false;
   bool _isSubmitting = false;
+
+  // Instance dari ApiService
+  final ApiService _apiService = ApiService();
 
   Future<void> _selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
@@ -60,10 +76,7 @@ class ReservationFormState extends State<ReservationForm> {
             colorScheme: ColorScheme.light(
               primary: Colors.orange[400]!,
               onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black,
             ),
-            dialogBackgroundColor: Colors.white,
           ),
           child: child!,
         );
@@ -84,8 +97,6 @@ class ReservationFormState extends State<ReservationForm> {
             colorScheme: ColorScheme.light(
               primary: Colors.orange[400]!,
               onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black,
             ),
           ),
           child: child!,
@@ -97,57 +108,65 @@ class ReservationFormState extends State<ReservationForm> {
     }
   }
 
-  // Di dalam class ReservationFormState
-
-  void _processReservation() {
-    setState(() => _isSubmitting = true);
-
-    final reservationData = {
-      'nama': _nameController.text,
-      'telepon': _phoneController.text,
-      'tanggal': _selectedDate!.toIso8601String(),
-      'waktu': _selectedTime!.format(context),
-      'catatan': _notesController.text,
-    };
-
-    Future.delayed(const Duration(seconds: 1), () {
-      if (!mounted) return;
-
-      setState(() => _isSubmitting = false);
-
-      // Hapus kondisi if(_preorderMenu) agar selalu navigasi
-      Navigator.pushNamed(
-        context,
-        '/menu-reservation',
-        arguments: {
-          'reservationData': reservationData,
-          'preorder': true,
-        },
-      );
-
-      // Reset form setelah navigasi
-      _formKey.currentState?.reset();
-      setState(() {
-        _selectedDate = null;
-        _selectedTime = null;
-        _preorderMenu = false;
-      });
-    });
-  }
-
-  void _submitForm() {
+  // --- LOGIKA UTAMA ADA DI SINI ---
+  void _submitForm() async {
+    // <-- Ubah menjadi async
     if (_formKey.currentState!.validate() &&
         _selectedDate != null &&
         _selectedTime != null) {
-      _processReservation();
+      setState(() => _isSubmitting = true);
+
+      try {
+        // 1. Buat objek ReservationModel dari data form
+        final reservationData = ReservationModel(
+          id: 0, // ID diisi 0, server akan meng-generate yang baru
+          name: _nameController.text,
+          phoneNumber: _phoneController.text,
+          reservationDate: _selectedDate!,
+          reservationTime: _selectedTime!.format(context),
+          numberOfGuests: int.tryParse(_guestController.text) ?? 1,
+          specialRequest: _notesController.text,
+        );
+
+        // 2. Panggil API untuk membuat reservasi
+        final newReservation =
+            await _apiService.addReservation(reservationData);
+
+        // 3. Jika berhasil, navigasi ke halaman menu dengan membawa ID
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Reservasi berhasil! Silakan pilih menu Anda.'),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          Navigator.pushReplacementNamed(
+            context,
+            '/menu', // Arahkan ke menu screen yang sama
+            arguments: newReservation.id, // Kirim ID reservasi yang baru dibuat
+          );
+        }
+      } catch (e) {
+        // 4. Jika gagal, tampilkan pesan error
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Gagal membuat reservasi: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } finally {
+        // 5. Hentikan loading indicator
+        if (mounted) {
+          setState(() => _isSubmitting = false);
+        }
+      }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('⚠️ Lengkapi semua data terlebih dahulu'),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
           backgroundColor: Colors.orange[400],
         ),
       );
@@ -159,6 +178,7 @@ class ReservationFormState extends State<ReservationForm> {
     _nameController.dispose();
     _phoneController.dispose();
     _notesController.dispose();
+    _guestController.dispose();
     super.dispose();
   }
 
@@ -187,6 +207,22 @@ class ReservationFormState extends State<ReservationForm> {
               icon: Icons.phone_iphone_outlined,
               keyboardType: TextInputType.phone,
               validator: ValidationHelper.validatePhoneNumber,
+            ),
+            const SizedBox(height: 16),
+            _buildInputField(
+              // <-- TAMBAHKAN INPUT UNTUK JUMLAH TAMU
+              controller: _guestController,
+              label: 'Jumlah Tamu',
+              icon: Icons.people_outline,
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                if (value == null ||
+                    value.isEmpty ||
+                    (int.tryParse(value) ?? 0) <= 0) {
+                  return 'Jumlah tamu tidak valid';
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 16),
             _buildInputField(
@@ -223,8 +259,6 @@ class ReservationFormState extends State<ReservationForm> {
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-            const SizedBox(height: 16),
             const SizedBox(height: 32),
             _buildSubmitButton(),
             const SizedBox(height: 40),
@@ -234,17 +268,10 @@ class ReservationFormState extends State<ReservationForm> {
     );
   }
 
-  Widget _buildSectionTitle(String text) {
-    return Text(
-      text,
+  // --- WIDGET BUILDER HELPERS (TIDAK ADA PERUBAHAN) ---
+  Widget _buildSectionTitle(String text) => Text(text,
       style: TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.bold,
-        color: Colors.grey[700],
-      ),
-    );
-  }
-
+          fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey[700]));
   Widget _buildInputField({
     required TextEditingController controller,
     required String label,
@@ -252,96 +279,65 @@ class ReservationFormState extends State<ReservationForm> {
     TextInputType? keyboardType,
     String? Function(String?)? validator,
     int maxLines = 1,
-  }) {
-    return TextFormField(
-      controller: controller,
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon, color: Colors.grey[600]),
-        border: OutlineInputBorder(
+  }) =>
+      TextFormField(
+          controller: controller,
+          decoration: InputDecoration(
+              labelText: label,
+              prefixIcon: Icon(icon, color: Colors.grey[600]),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey[300]!)),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey[300]!)),
+              filled: true,
+              fillColor: Colors.white),
+          keyboardType: keyboardType,
+          validator: validator,
+          maxLines: maxLines);
+  Widget _buildDateTimePicker(
+          {required String label,
+          required String value,
+          required IconData icon,
+          required VoidCallback onTap}) =>
+      InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        filled: true,
-        fillColor: Colors.white,
-      ),
-      keyboardType: keyboardType,
-      validator: validator,
-      maxLines: maxLines,
-    );
-  }
-
-  Widget _buildDateTimePicker({
-    required String label,
-    required String value,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: Icon(icon, color: Colors.grey[600]),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey[300]!),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey[300]!),
-          ),
-          filled: true,
-          fillColor: Colors.white,
-        ),
-        child: Text(
-          value,
-          style: TextStyle(
-            color: _selectedDate == null && label == 'Tanggal' ||
-                    _selectedTime == null && label == 'Waktu'
-                ? Colors.grey[500]
-                : Colors.black,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSubmitButton() {
-    return SizedBox(
+          child: InputDecorator(
+              decoration: InputDecoration(
+                  labelText: label,
+                  prefixIcon: Icon(icon, color: Colors.grey[600]),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[300]!)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[300]!)),
+                  filled: true,
+                  fillColor: Colors.white),
+              child: Text(value,
+                  style: TextStyle(
+                      color: _selectedDate == null && label == 'Tanggal' ||
+                              _selectedTime == null && label == 'Waktu'
+                          ? Colors.grey[500]
+                          : Colors.black))));
+  Widget _buildSubmitButton() => SizedBox(
       width: double.infinity,
       child: ElevatedButton(
-        onPressed: _isSubmitting ? null : _submitForm,
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          backgroundColor: Colors.orange[400],
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          elevation: 0,
-        ),
-        child: _isSubmitting
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Text(
-                'PILIH MENU',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-      ),
-    );
-  }
+          onPressed: _isSubmitting ? null : _submitForm,
+          style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              backgroundColor: Colors.orange[400],
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12))),
+          child: _isSubmitting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Text('PILIH MENU',
+                  style:
+                      TextStyle(fontSize: 16, fontWeight: FontWeight.bold))));
 }

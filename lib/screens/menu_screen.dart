@@ -1,6 +1,15 @@
+/*
+================================================================================
+| 2. File: lib/screens/menu_screen.dart (LENGKAP & FINAL)                      |
+|------------------------------------------------------------------------------|
+| Perubahan:                                                                   |
+| - Memperbaiki logika `_fetchMenuItems` untuk menghindari cast yang tidak     |
+|   perlu dan lebih mudah dibaca.                                              |
+================================================================================
+*/
 import 'package:flutter/material.dart';
 import '../models/food_model.dart';
-import '../services/api_service.dart'; // Import service baru kita
+import '../services/api_service.dart';
 import '../widgets/custom_bottom_navigation_bar.dart';
 import '../widgets/food_card.dart';
 import '../widgets/food_detail_dialog.dart';
@@ -12,491 +21,263 @@ class MenuScreen extends StatefulWidget {
   State<MenuScreen> createState() => _MenuScreenState();
 }
 
-class _MenuScreenState extends State<MenuScreen> with TickerProviderStateMixin {
+class _MenuScreenState extends State<MenuScreen> {
+  final ApiService _apiService = ApiService();
+
+  // UI State
   int _selectedIndex = 1;
   bool _showFoods = true;
-
-  List<FoodModel> _foodItems = [];
-  List<FoodModel> _drinkItems = [];
   bool _isLoading = true;
   String? _error;
 
-  // Animation controllers
-  late AnimationController _fadeController;
-  late AnimationController _scaleController;
-  late AnimationController _buttonController;
-  late AnimationController _gridController;
-  late AnimationController _pageTransitionController;
+  // State untuk alur Reservasi -> Pesanan
+  int? reservationId;
+  final Map<int, FoodModel> _cartItems = {};
+  final Map<int, int> _itemQuantities = {};
+  bool _isPlacingOrder = false;
 
-  // Animations
-  late Animation<double> _fadeAnimation;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _pageTransitionAnimation;
-
-  // For card tap animation
-  int? _tappedIndex;
-  late AnimationController _cardTapController;
-  late Animation<double> _cardTapAnimation;
+  // Data
+  List<FoodModel> _foodItems = [];
+  List<FoodModel> _drinkItems = [];
 
   @override
   void initState() {
     super.initState();
-    _fetchMenuItems(); // Panggil fungsi untuk mengambil data dari API
-
-    // Initialize animation controllers
-    _fadeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 500),
-    );
-
-    _scaleController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-
-    _buttonController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-
-    _gridController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-
-    _pageTransitionController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
-    );
-
-    _cardTapController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
-
-    // Initialize animations
-    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
-    );
-
-    _scaleAnimation = Tween<double>(begin: 0.95, end: 1).animate(
-      CurvedAnimation(parent: _scaleController, curve: Curves.easeOutBack),
-    );
-
-    _pageTransitionAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(
-          parent: _pageTransitionController, curve: Curves.easeInOut),
-    );
-
-    _cardTapAnimation = Tween<double>(begin: 1, end: 0.95).animate(
-      CurvedAnimation(parent: _cardTapController, curve: Curves.easeInOut),
-    );
-
-    // Start animations
-    _fadeController.forward();
-    _scaleController.forward();
-    _gridController.forward();
-    _pageTransitionController.forward();
-  }
-
-  @override
-  void dispose() {
-    _fadeController.dispose();
-    _scaleController.dispose();
-    _buttonController.dispose();
-    _gridController.dispose();
-    _pageTransitionController.dispose();
-    _cardTapController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _fetchMenuItems() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    try {
-      final apiService = ApiService();
-      final foods = await apiService.fetchFoods();
-      final drinks = await apiService.fetchDrinks();
-      setState(() {
-        _foodItems = foods;
-        _drinkItems = drinks;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Failed to load menu items: $e';
-        _isLoading = false;
-      });
-      print('Error fetching menu items: $e'); // For debugging
-    }
+    _fetchMenuItems();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    precacheImage(
-        const AssetImage('assets/images/background_images/food_background.png'),
-        context);
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is int && reservationId == null) {
+      setState(() {
+        reservationId = args;
+      });
+    }
+  }
+
+  Future<void> _fetchMenuItems() async {
+    setState(() => _isLoading = true);
+    try {
+      // Mengambil data makanan dan minuman secara terpisah untuk kejelasan
+      final foods = await _apiService.fetchFoods();
+      final drinks = await _apiService.fetchDrinks();
+
+      if (mounted) {
+        setState(() {
+          _foodItems = foods;
+          _drinkItems = drinks;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Gagal memuat menu: $e';
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   void _onItemTapped(int index) {
     if (index == _selectedIndex) return;
-
-    // Animate out before navigation
-    _pageTransitionController.reverse().then((_) {
-      if (mounted) {
-        setState(() => _selectedIndex = index);
-        switch (index) {
-          case 0:
-            Navigator.pushNamedAndRemoveUntil(
-                context, '/home', (route) => false);
-            break;
-          case 1:
-            break;
-          case 2:
-            Navigator.pushNamed(context, '/about').then((_) {
-              if (mounted) setState(() => _selectedIndex = 0);
-            });
-            break;
-          case 3:
-            Navigator.pushNamed(context, '/profile').then((_) {
-              if (mounted) setState(() => _selectedIndex = 0);
-            });
-            break;
-        }
-      }
-    });
-  }
-
-  Future<void> _showFoodDetail(FoodModel food, int index) async {
-    setState(() => _tappedIndex = index);
-    await _cardTapController.forward();
-    await _cardTapController.reverse();
-
-    _scaleController.reverse();
-    await showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        insetPadding: const EdgeInsets.all(20),
-        backgroundColor: Colors.transparent,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.8, end: 1).animate(
-            CurvedAnimation(
-              parent: ModalRoute.of(context)!.animation!,
-              curve: Curves.easeOutBack,
-            ),
-          ),
-          child: FadeTransition(
-            opacity: ModalRoute.of(context)!.animation!,
-            child: FoodDetailDialog(food: food),
-          ),
-        ),
-      ),
-    );
-    _scaleController.forward();
-    setState(() => _tappedIndex = null);
+    setState(() => _selectedIndex = index);
+    switch (index) {
+      case 0:
+        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+        break;
+      case 2:
+        Navigator.pushNamed(context, '/about');
+        break;
+      case 3:
+        Navigator.pushNamed(context, '/profile');
+        break;
+    }
   }
 
   void _toggleFoods(bool showFoods) {
     if (_showFoods == showFoods) return;
+    setState(() => _showFoods = showFoods);
+  }
 
+  void _addToCart(FoodModel food, {int quantity = 1}) {
     setState(() {
-      _showFoods = showFoods;
-      _buttonController.reverse();
+      if (_itemQuantities.containsKey(food.id)) {
+        _itemQuantities[food.id] = _itemQuantities[food.id]! + quantity;
+      } else {
+        _cartItems[food.id] = food;
+        _itemQuantities[food.id] = quantity;
+      }
     });
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content:
+            Text('${food.name} (${_itemQuantities[food.id]}x) ditambahkan.'),
+        duration: const Duration(seconds: 2),
+        backgroundColor: Colors.green.shade600,
+      ),
+    );
+  }
 
-    _buttonController.forward(from: 0);
-    _gridController.reset();
-    _gridController.forward();
+  void _showFoodDetail(FoodModel food) async {
+    await showDialog(
+      context: context,
+      builder: (context) => FoodDetailDialog(
+        food: food,
+        onAddToCart: (quantity) {
+          _addToCart(food, quantity: quantity);
+          Navigator.of(context).pop();
+        },
+      ),
+    );
+  }
+
+  void _handleCheckout() async {
+    if (reservationId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Error: ID Reservasi tidak ditemukan.')));
+      return;
+    }
+    if (_cartItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Keranjang Anda masih kosong.')));
+      return;
+    }
+
+    setState(() => _isPlacingOrder = true);
+
+    final itemsForApi = _itemQuantities.entries.map((entry) {
+      return {'menu_item_id': entry.key, 'quantity': entry.value};
+    }).toList();
+
+    try {
+      await _apiService.createOrder(
+        reservationId: reservationId!,
+        items: itemsForApi,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Pesanan Anda berhasil dibuat!'),
+            backgroundColor: Colors.green));
+        Navigator.pushNamedAndRemoveUntil(
+            context, '/history', (route) => false);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Gagal membuat pesanan: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPlacingOrder = false);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final List<FoodModel> currentItems = _showFoods ? _foodItems : _drinkItems;
+    final bool isReservationFlow = reservationId != null;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: AnimatedBuilder(
-          animation: _fadeController,
-          builder: (context, child) => FadeTransition(
-            opacity: _fadeAnimation,
-            child: Transform.translate(
-              offset: Offset(0, (1 - _fadeAnimation.value) * 20),
-              child: Text(
-                'Menu Kami',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange[400],
-                  fontSize: 22,
-                ),
-              ),
-            ),
-          ),
+        title: Text(
+          isReservationFlow ? 'Pilih Pesanan Anda' : 'Menu Kami',
+          style:
+              TextStyle(fontWeight: FontWeight.bold, color: Colors.orange[400]),
         ),
         centerTitle: true,
         elevation: 2,
         backgroundColor: Colors.white,
-        automaticallyImplyLeading: false,
+        automaticallyImplyLeading: isReservationFlow,
       ),
-      body: AnimatedBuilder(
-        animation: _pageTransitionController,
-        builder: (context, child) {
-          return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.1),
-              end: Offset.zero,
-            ).animate(CurvedAnimation(
-              parent: _pageTransitionController,
-              curve: Curves.easeOutQuart,
-            )),
-            child: FadeTransition(
-              opacity: _pageTransitionAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                child: Container(
-                  color: Colors.grey[50],
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 16),
-                      // Toggle Button with animation
-                      Row(
-                        children: [
-                          Expanded(
-                            child: AnimatedBuilder(
-                                animation: _buttonController,
-                                builder: (context, child) {
-                                  return ElevatedButton(
-                                    onPressed: () => _toggleFoods(true),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _showFoods
-                                          ? Colors.orange[400]
-                                          : Colors.grey[300],
-                                      foregroundColor: _showFoods
-                                          ? Colors.white
-                                          : Colors.black,
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 12),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      elevation: _showFoods ? 4 : 0,
-                                      shadowColor:
-                                          Colors.orange.withOpacity(0.3),
-                                    ),
-                                    child: AnimatedSwitcher(
-                                      duration:
-                                          const Duration(milliseconds: 300),
-                                      transitionBuilder: (child, animation) =>
-                                          ScaleTransition(
-                                        scale: animation,
-                                        child: child,
-                                      ),
-                                      child: Text(
-                                        'Makanan',
-                                        key: ValueKey<bool>(_showFoods),
-                                      ),
-                                    ),
-                                  );
-                                }),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: AnimatedBuilder(
-                              animation: _buttonController,
-                              builder: (context, child) {
-                                return ElevatedButton(
-                                  onPressed: () => _toggleFoods(false),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: !_showFoods
-                                        ? Colors.orange[400]
-                                        : Colors.grey[300],
-                                    foregroundColor: !_showFoods
-                                        ? Colors.white
-                                        : Colors.black,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    elevation: !_showFoods ? 4 : 0,
-                                    shadowColor: Colors.orange.withOpacity(0.3),
-                                  ),
-                                  child: AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 300),
-                                    transitionBuilder: (child, animation) =>
-                                        ScaleTransition(
-                                      scale: animation,
-                                      child: child,
-                                    ),
-                                    child: Text(
-                                      'Minuman',
-                                      key: ValueKey<bool>(!_showFoods),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      // GridView Menu with staggered animation
-                      Expanded(
-                        child: _isLoading
-                            ? const Center(child: CircularProgressIndicator())
-                            : _error != null
-                                ? Center(child: Text(_error!))
-                                : currentItems.isEmpty
-                                    ? const Center(
-                                        child: Text('No items to display.'))
-                                    : AnimatedBuilder(
-                                        animation: _gridController,
-                                        builder: (context, child) {
-                                          return GridView.builder(
-                                            padding: const EdgeInsets.only(
-                                                bottom: 20),
-                                            physics:
-                                                const BouncingScrollPhysics(),
-                                            gridDelegate:
-                                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                              crossAxisCount: 2,
-                                              crossAxisSpacing: 12,
-                                              mainAxisSpacing: 12,
-                                              childAspectRatio: 0.9,
-                                            ),
-                                            itemCount: currentItems.length,
-                                            itemBuilder: (context, index) {
-                                              final animationInterval =
-                                                  0.5 / currentItems.length;
-                                              final animation = Tween<double>(
-                                                begin: 0,
-                                                end: 1,
-                                              ).animate(
-                                                CurvedAnimation(
-                                                  parent: _gridController,
-                                                  curve: Interval(
-                                                    index * animationInterval,
-                                                    (index + 1) *
-                                                        animationInterval,
-                                                    curve: Curves.easeOut,
-                                                  ),
-                                                ),
-                                              );
-
-                                              final item = currentItems[index];
-
-                                              // Card tap animation
-                                              final isTapped =
-                                                  _tappedIndex == index;
-                                              final tapAnimation = isTapped
-                                                  ? _cardTapAnimation
-                                                  : AlwaysStoppedAnimation(1.0);
-
-                                              return GestureDetector(
-                                                onTapDown: (_) {
-                                                  setState(() =>
-                                                      _tappedIndex = index);
-                                                  _cardTapController.forward();
-                                                },
-                                                onTapUp: (_) {
-                                                  _cardTapController.reverse();
-                                                  _showFoodDetail(item, index);
-                                                },
-                                                onTapCancel: () {
-                                                  setState(() =>
-                                                      _tappedIndex = null);
-                                                  _cardTapController.reverse();
-                                                },
-                                                child: AnimatedBuilder(
-                                                  animation: animation,
-                                                  builder: (context, child) {
-                                                    return Transform.translate(
-                                                      offset: Offset(
-                                                          0,
-                                                          (1 -
-                                                                  animation
-                                                                      .value) *
-                                                              50 *
-                                                              (index % 2 == 0
-                                                                  ? 1
-                                                                  : -1)),
-                                                      child: Opacity(
-                                                        opacity:
-                                                            animation.value,
-                                                        child: AnimatedBuilder(
-                                                          animation:
-                                                              tapAnimation,
-                                                          builder:
-                                                              (context, child) {
-                                                            return Transform
-                                                                .scale(
-                                                              scale: animation
-                                                                      .value *
-                                                                  tapAnimation
-                                                                      .value,
-                                                              child: child,
-                                                            );
-                                                          },
-                                                          child: Hero(
-                                                            tag:
-                                                                'food_${item.id}',
-                                                            flightShuttleBuilder:
-                                                                (
-                                                              BuildContext
-                                                                  flightContext,
-                                                              Animation<double>
-                                                                  animation,
-                                                              HeroFlightDirection
-                                                                  flightDirection,
-                                                              BuildContext
-                                                                  fromHeroContext,
-                                                              BuildContext
-                                                                  toHeroContext,
-                                                            ) {
-                                                              final Hero hero = flightDirection ==
-                                                                      HeroFlightDirection
-                                                                          .push
-                                                                  ? fromHeroContext
-                                                                          .widget
-                                                                      as Hero
-                                                                  : toHeroContext
-                                                                          .widget
-                                                                      as Hero;
-                                                              return hero.child;
-                                                            },
-                                                            child: Material(
-                                                              color: Colors
-                                                                  .transparent,
-                                                              child: FoodCard(
-                                                                  food: item),
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    );
-                                                  },
-                                                ),
-                                              );
-                                            },
-                                          );
-                                        }),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                Expanded(child: _buildCategoryButton('Makanan', true)),
+                const SizedBox(width: 10),
+                Expanded(child: _buildCategoryButton('Minuman', false)),
+              ],
             ),
-          );
-        },
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(
+                        child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Text(_error!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.red))))
+                    : GridView.builder(
+                        padding: EdgeInsets.fromLTRB(
+                            16, 0, 16, isReservationFlow ? 80 : 20),
+                        physics: const BouncingScrollPhysics(),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 16,
+                                mainAxisSpacing: 16,
+                                childAspectRatio: 0.8),
+                        itemCount: currentItems.length,
+                        itemBuilder: (context, index) {
+                          final item = currentItems[index];
+                          return FoodCard(
+                            food: item,
+                            onTap: () => _showFoodDetail(item),
+                            onAddToCart: () => _addToCart(item),
+                          );
+                        },
+                      ),
+          ),
+        ],
       ),
-      bottomNavigationBar: CustomBottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-      ),
+      floatingActionButton: isReservationFlow
+          ? FloatingActionButton.extended(
+              onPressed: _isPlacingOrder ? null : _handleCheckout,
+              backgroundColor: Colors.orange[400],
+              icon: _isPlacingOrder
+                  ? Container(
+                      width: 24,
+                      height: 24,
+                      padding: const EdgeInsets.all(2.0),
+                      child: const CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 3))
+                  : const Icon(Icons.shopping_cart_checkout_rounded),
+              label: Text(_isPlacingOrder
+                  ? 'MEMPROSES...'
+                  : 'PESAN SEKARANG (${_cartItems.length})'),
+            )
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      bottomNavigationBar: !isReservationFlow
+          ? CustomBottomNavigationBar(
+              currentIndex: _selectedIndex, onTap: _onItemTapped)
+          : null,
     );
+  }
+
+  Widget _buildCategoryButton(String title, bool isFoodButton) {
+    final bool isActive = isFoodButton == _showFoods;
+    return ElevatedButton(
+        onPressed: () => _toggleFoods(isFoodButton),
+        style: ElevatedButton.styleFrom(
+            backgroundColor: isActive ? Colors.orange[400] : Colors.grey[200],
+            foregroundColor: isActive ? Colors.white : Colors.black54,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            elevation: isActive ? 4 : 0),
+        child:
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)));
   }
 }

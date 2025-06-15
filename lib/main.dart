@@ -106,7 +106,28 @@ class MyApp extends StatelessWidget {
             appBar: AppBar(title: Text(args.name)),
             body: Padding(
               padding: const EdgeInsets.all(16.0),
-              child: FoodCard(food: args),
+              // ==================== PERUBAHAN DI SINI ====================
+              // Menambahkan parameter onTap dan onAddToCart yang wajib.
+              // Di sini kita berikan fungsi placeholder karena halaman ini
+              // tidak memiliki konteks keranjang belanja.
+              child: FoodCard(
+                food: args,
+                onTap: () {
+                  // Tidak ada aksi khusus yang diperlukan saat diketuk di halaman ini
+                  print("Card tapped on its own page: ${args.name}");
+                },
+                onAddToCart: () {
+                  // Menampilkan notifikasi sederhana karena tidak ada
+                  // state keranjang belanja di rute ini.
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${args.name} ditambahkan ke keranjang.'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                },
+              ),
+              // ==========================================================
             ),
           );
         } else {
