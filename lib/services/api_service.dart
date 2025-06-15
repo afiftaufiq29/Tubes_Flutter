@@ -1,11 +1,3 @@
-/*
-================================================================================
-| 1. File: lib/services/api_service.dart (LENGKAP & FINAL)                     |
-|------------------------------------------------------------------------------|
-| Perubahan:                                                                   |
-| - Memastikan metode `createOrder` ada dan berfungsi dengan benar.            |
-================================================================================
-*/
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -24,7 +16,8 @@ class ApiService {
   factory ApiService() => _instance;
 
   // --- Configuration ---
-  static const String _baseUrl = 'http://192.168.1.30:8000/api';
+  static const String _baseUrl =
+      'http://192.168.1.30:8000/api'; // Pastikan IP ini benar
   String? _authToken;
   static const String _tokenKey = 'auth_token';
 
@@ -139,8 +132,10 @@ class ApiService {
   }
 
   Future<List<FoodModel>> fetchDrinks() async {
-    final response = await http.get(Uri.parse('$_baseUrl/drinks-admin'),
-        headers: _getHeaders());
+    // --- PENYESUAIAN DI SINI ---
+    // Menggunakan endpoint /foods dengan parameter query untuk mendapatkan minuman.
+    final url = Uri.parse('$_baseUrl/foods?type=drink');
+    final response = await http.get(url, headers: _getHeaders());
     if (response.statusCode == 200) {
       final List<dynamic> menuJson = json.decode(response.body);
       return menuJson.map((json) => FoodModel.fromJson(json)).toList();
